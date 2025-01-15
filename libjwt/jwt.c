@@ -1,4 +1,4 @@
-/* Copyright (C) 2015-2024 maClara, LLC <info@maclara-llc.com>
+/* Copyright (C) 2015-2025 maClara, LLC <info@maclara-llc.com>
    This file is part of the JWT C Library
 
    SPDX-License-Identifier:  MPL-2.0
@@ -8,7 +8,6 @@
 
 #include <stdlib.h>
 #include <string.h>
-#include <errno.h>
 #include <stdio.h>
 
 #include <jwt.h>
@@ -17,33 +16,6 @@
 #include "base64.h"
 
 #include "jwt-private.h"
-
-int __append_str(char **buf, const char *str)
-{
-	char *new;
-
-	if (str == NULL || str[0] == '\0')
-		return 0;
-
-	if (*buf == NULL) {
-		new = jwt_malloc(strlen(str) + 1);
-		if (new)
-			new[0] = '\0';
-	} else {
-		new = jwt_realloc(*buf, strlen(*buf) + strlen(str) + 1);
-	}
-
-	if (new == NULL) {
-		jwt_freemem(*buf);
-		return 1;
-	}
-
-	strcat(new, str);
-
-	*buf = new;
-
-	return 0;
-}
 
 const char *jwt_alg_str(jwt_alg_t alg)
 {
@@ -122,12 +94,6 @@ jwt_alg_t jwt_str_alg(const char *alg)
 	return JWT_ALG_INVAL;
 }
 
-void jwt_scrub_key(jwt_t *jwt)
-{
-	jwt->jw_key = NULL;
-	jwt->alg = JWT_ALG_NONE;
-}
-
 JWT_NO_EXPORT
 jwt_t *jwt_new(void)
 {
@@ -139,59 +105,12 @@ jwt_t *jwt_new(void)
 	memset(jwt, 0, sizeof(*jwt));
 
 	jwt->grants = json_object();
-	if (!jwt->grants) {
-		jwt_freep(&jwt);
-		return NULL;
-	}
-
 	jwt->headers = json_object();
-	if (!jwt->headers) {
+
+	if (!jwt->grants || !jwt->headers)
 		jwt_freep(&jwt);
-		return NULL;
-	}
 
 	return jwt;
-}
-
-jwt_t *jwt_create(jwt_config_t *config)
-{
-	jwt_t *new = NULL;
-	jwt_alg_t alg;
-
-	/* Just an insecure JWT */
-	if (config == NULL)
-		return jwt_new();
-
-	/* At this point, we expect a key. */
-	if (config->jw_key == NULL)
-		return NULL;
-
-	if (config->alg == JWT_ALG_NONE && config->jw_key->alg == JWT_ALG_NONE)
-		return NULL;
-
-	/* If both are set, they need to match. */
-	if (config->alg != JWT_ALG_NONE &&
-	    config->jw_key->alg != JWT_ALG_NONE &&
-	    config->alg != config->jw_key->alg)
-		return NULL;
-
-	if (config->alg != JWT_ALG_NONE)
-		alg = config->alg;
-	else
-		alg = config->jw_key->alg;
-
-	/* Make sure alg is sane */
-	if (alg < JWT_ALG_NONE || alg >= JWT_ALG_INVAL)
-		return NULL;
-
-	new = jwt_new();
-
-	if (new) {
-		new->jw_key = config->jw_key;
-		new->alg = alg;
-	}
-
-	return new;
 }
 
 jwt_alg_t jwt_get_alg(const jwt_t *jwt)
@@ -207,112 +126,12 @@ void jwt_free(jwt_t *jwt)
 	if (!jwt)
 		return;
 
-	jwt_scrub_key(jwt);
-
 	json_decref(jwt->grants);
 	json_decref(jwt->headers);
 
 	memset(jwt, 0, sizeof(*jwt));
 
 	jwt_freemem(jwt);
-}
-
-jwt_t *jwt_dup(jwt_t *jwt)
-{
-	jwt_t *new = NULL;
-
-	if (!jwt) {
-		errno = EINVAL;
-		goto dup_fail;
-	}
-
-	errno = 0;
-
-	new = jwt_malloc(sizeof(*new));
-	if (!new) {
-		// LCOV_EXCL_START
-		errno = ENOMEM;
-		return NULL;
-		// LCOV_EXCL_STOP
-	}
-
-	memset(new, 0, sizeof(jwt_t));
-
-	new->jw_key = jwt->jw_key;
-	new->alg = jwt->alg;
-
-	new->grants = json_deep_copy(jwt->grants);
-	if (!new->grants)
-		errno = ENOMEM; // LCOV_EXCL_LINE
-
-	new->headers = json_deep_copy(jwt->headers);
-	if (!new->headers)
-		errno = ENOMEM; // LCOV_EXCL_LINE
-
-dup_fail:
-	if (errno)
-		jwt_freep(&new);
-
-	return new;
-}
-
-const char *get_js_string(const json_t *js, const char *key)
-{
-	const char *val = NULL;
-	json_t *js_val;
-
-	js_val = json_object_get(js, key);
-	if (js_val) {
-		if (json_is_string(js_val))
-			val = json_string_value(js_val);
-		else
-			errno = EINVAL;
-	} else {
-		errno = ENOENT;
-	}
-
-	return val;
-}
-
-long get_js_int(const json_t *js, const char *key)
-{
-	long val = -1;
-	json_t *js_val;
-
-	js_val = json_object_get(js, key);
-	if (js_val) {
-		if (json_is_integer(js_val))
-			val = (long)json_integer_value(js_val);
-		else
-			errno = EINVAL;
-	} else {
-		errno = ENOENT;
-	}
-
-	return val;
-}
-
-int get_js_bool(const json_t *js, const char *key)
-{
-	int val = -1;
-	json_t *js_val;
-
-	js_val = json_object_get(js, key);
-	if (js_val) {
-		switch (json_typeof(js_val)) {
-		case JSON_TRUE:
-			val = 1;
-			break;
-		case JSON_FALSE:
-			val = 0;
-			break;
-		default:
-			errno = EINVAL;
-		}
-	} else {
-		errno = ENOENT;
-	}
-	return val;
 }
 
 void *jwt_base64uri_decode(const char *src, int *ret_len)
@@ -326,9 +145,29 @@ void *jwt_base64uri_decode(const char *src, int *ret_len)
 
 	/* Decode based on RFC-4648 URI safe encoding. */
 	len = (int)strlen(src);
-	/* When reversing the URI cleanse, we can possibly add up
-	 * to 3 '=' characters to replace the missing padding. */
-	new = jwt_malloc(len + 4);
+
+	/* Validate length */
+	z = (len % 4);
+	switch (z) {
+	case 0:
+		/* No added padding */
+		break;
+
+	case 2:
+		/* 2 added = for padding */
+		break;
+
+	case 3:
+		/* 1 added = for padding */
+		z = 1;
+		break;
+
+	default:
+		/* Something bad */
+		return NULL;
+	}
+
+	new = jwt_malloc(len + z + 1);
 	if (!new)
 		return NULL; // LCOV_EXCL_LINE
 
@@ -344,11 +183,10 @@ void *jwt_base64uri_decode(const char *src, int *ret_len)
 			new[i] = src[i];
 		}
 	}
-	z = 4 - (i % 4);
-	if (z < 4) {
-		while (z--)
-			new[i++] = '=';
-	}
+
+	for (; z > 0; z--)
+		new[i++] = '=';
+
 	new[i] = '\0';
 	len = i;
 
@@ -378,7 +216,7 @@ int jwt_base64uri_encode(char **_dst, const char *plain, int plain_len)
 	len = BASE64_ENCODE_OUT_SIZE(plain_len);
 	dst = jwt_malloc(len + 1);
 	if (dst == NULL)
-		return -ENOMEM; // LCOV_EXCL_LINE
+		return -1; // LCOV_EXCL_LINE
 
 	/* First, a normal base64 encoding */
 	len = base64_encode((const unsigned char *)plain, plain_len, dst);
@@ -409,39 +247,48 @@ int jwt_base64uri_encode(char **_dst, const char *plain, int plain_len)
 	return i;
 }
 
-static int __check_hmac(const jwt_t *jwt)
+static int __check_hmac(jwt_t *jwt)
 {
-	int key_bits = jwt->jw_key->bits;
+	int key_bits = jwt->key->bits;
 
-	if (key_bits < 256)
-		return -1;
+	if (key_bits < 256) {
+		jwt_write_error(jwt, "Key too short for HS algs: %d bits",
+				key_bits);
+		return 1;
+	}
 
 	switch (jwt->alg) {
 	case JWT_ALG_HS256:
 		if (key_bits >= 256)
 			return 0;
+		jwt_write_error(jwt, "Key too short for HS256: %d bits",
+				key_bits);
 		break;
 
 	case JWT_ALG_HS384:
 		if (key_bits >= 384)
 			return 0;
+		jwt_write_error(jwt, "Key too short for HS384: %d bits",
+				key_bits);
 		break;
 
 	case JWT_ALG_HS512:
 		if (key_bits >= 512)
 			return 0;
+		jwt_write_error(jwt, "Key too short for HS512: %d bits",
+				key_bits);
 		break;
 
 	default:
-		return -1;
+		return 1;
 	}
 
-	return -1;
+	return 1;
 }
 
-static int __check_key_bits(const jwt_t *jwt)
+static int __check_key_bits(jwt_t *jwt)
 {
-	int key_bits = jwt->jw_key->bits;
+	int key_bits = jwt->key->bits;
 
 	/* Ignore if we don't have it */
 	if (key_bits == 0)
@@ -457,30 +304,38 @@ static int __check_key_bits(const jwt_t *jwt)
 	case JWT_ALG_PS512:
 		if (key_bits >= 2048)
 			return 0;
+		jwt_write_error(jwt, "Key too short for RSA algs: %d bits",
+				key_bits);
 		break;
 
 	case JWT_ALG_EDDSA:
 	case JWT_ALG_ES256K:
 	case JWT_ALG_ES256:
-		if (key_bits == 256)
+		if (key_bits == 256 || key_bits == 456)
 			return 0;
+		jwt_write_error(jwt, "Key needs to be 256 or 456 bits: %d bits",
+				key_bits);
 		break;
 
 	case JWT_ALG_ES384:
 		if (key_bits == 384)
 			return 0;
+		jwt_write_error(jwt, "Key needs to be 384 bits: %d bits",
+				key_bits);
 		break;
 
 	case JWT_ALG_ES512:
 		if (key_bits == 521)
 			return 0;
+		jwt_write_error(jwt, "Key needs to be 521 bits: %d bits",
+				key_bits);
 		break;
 
 	default:
-		return -1;
+		return 1;
 	}
 
-	return -1;
+	return 1;
 }
 
 int jwt_sign(jwt_t *jwt, char **out, unsigned int *len, const char *str,
@@ -492,8 +347,13 @@ int jwt_sign(jwt_t *jwt, char **out, unsigned int *len, const char *str,
 	case JWT_ALG_HS384:
 	case JWT_ALG_HS512:
 		if (__check_hmac(jwt))
-			return EINVAL;
-		return jwt_ops->sign_sha_hmac(jwt, out, len, str, str_len);
+			return 1;
+		if (jwt_ops->sign_sha_hmac(jwt, out, len, str, str_len)) {
+			jwt_write_error(jwt, "Token failed signing");
+			return 1;
+		} else {
+			return 0;
+		}
 
 	/* RSA */
 	case JWT_ALG_RS256:
@@ -514,24 +374,32 @@ int jwt_sign(jwt_t *jwt, char **out, unsigned int *len, const char *str,
 	/* EdDSA */
 	case JWT_ALG_EDDSA:
 		if (__check_key_bits(jwt))
-			return EINVAL;
-		return jwt_ops->sign_sha_pem(jwt, out, len, str, str_len);
+			return 1;
+		if (jwt_ops->sign_sha_pem(jwt, out, len, str, str_len)) {
+			jwt_write_error(jwt, "Token failed signing");
+			return 1;
+		} else {
+			return 0;
+		}
 
 	/* You wut, mate? */
 	default:
-		return EINVAL;
+		jwt_write_error(jwt, "Unknown algorigthm");
+		return 1;
 	}
 }
 
-int jwt_verify_sig(jwt_t *jwt, const char *head, unsigned int head_len,
-		   const char *sig)
+jwt_t *jwt_verify_sig(jwt_t *jwt, const char *head, unsigned int head_len,
+		      const char *sig)
 {
 	switch (jwt->alg) {
 	/* HMAC */
 	case JWT_ALG_HS256:
 	case JWT_ALG_HS384:
 	case JWT_ALG_HS512:
-		return jwt_ops->verify_sha_hmac(jwt, head, head_len, sig);
+		if (jwt_ops->verify_sha_hmac(jwt, head, head_len, sig))
+			jwt_write_error(jwt, "Token failed verification");
+		break;
 
 	/* RSA */
 	case JWT_ALG_RS256:
@@ -551,15 +419,14 @@ int jwt_verify_sig(jwt_t *jwt, const char *head, unsigned int head_len,
 
 	/* EdDSA */
 	case JWT_ALG_EDDSA:
-		return jwt_ops->verify_sha_pem(jwt, head, head_len, sig);
+		if (jwt_ops->verify_sha_pem(jwt, head, head_len, sig))
+			jwt_write_error(jwt, "Token failed verification");
+		break;
 
 	/* You wut, mate? */
 	default:
-		return EINVAL;
+		jwt_write_error(jwt, "Unknown algorigthm");
 	}
-}
 
-void jwt_config_init(jwt_config_t *config)
-{
-	memset(config, 0, sizeof(*config));
+	return jwt;
 }

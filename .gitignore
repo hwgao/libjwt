@@ -1,22 +1,6 @@
-# Generic ignores for libtool project
-**/.deps/**
-*.la
-*.lo
-*.o
-/coverage.info
-/coveragereport/*
-*.gcno
-*~
-*.tmp
-.dirstamp
-.*.swp
-
 # Generic ignores for cmake project
-/out/**
 /build/**
+/out/**
 
-/doxygen-doc/**
-/libjwt/libjwt.pc
-
-# Cmake
-/build
+# VIM
+*.swp

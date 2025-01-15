@@ -1,4 +1,4 @@
-/* Copyright (C) 2024 maClara, LLC <info@maclara-llc.com>
+/* Copyright (C) 2024-2025 maClara, LLC <info@maclara-llc.com>
    This file is part of the JWT C Library
 
    SPDX-License-Identifier:  MPL-2.0
@@ -8,7 +8,6 @@
 
 #include <stdlib.h>
 #include <string.h>
-#include <errno.h>
 
 #include <jwt.h>
 #include "jwt-private.h"
@@ -19,12 +18,12 @@ static jwk_key_op_t jwk_key_op_j(json_t *j_op)
 	const char *op;
 
 	if (!j_op || !json_is_string(j_op))
-		return JWK_KEY_OP_INVALID;
+		return JWK_KEY_OP_NONE;
 
 	op = json_string_value(j_op);
 
 	if (op == NULL)
-		return JWK_KEY_OP_INVALID;
+		return JWK_KEY_OP_NONE;
 
 	if (!jwt_strcmp(op, "sign"))
 		return JWK_KEY_OP_SIGN;
@@ -53,8 +52,13 @@ static void jwk_process_values(json_t *jwk, jwk_item_t *item)
 
 	/* Start with the ALG (4.4). */
 	j_alg = json_object_get(jwk, "alg");
-	if (j_alg && json_is_string(j_alg))
+	if (j_alg) {
+		if (!json_is_string(j_alg)) {
+			 jwt_write_error(item, "Invalid alg type");
+			 return;
+		}
 		item->alg = jwt_str_alg(json_string_value(j_alg));
+	}
 
 	/* Check for use (4.2). */
 	j_use = json_object_get(jwk, "use");
@@ -70,13 +74,13 @@ static void jwk_process_values(json_t *jwk, jwk_item_t *item)
 	j_ops_a = json_object_get(jwk, "key_ops");
 	if (j_ops_a && json_is_array(j_ops_a)) {
 		json_t *j_op;
-		int i;
+		size_t i;
 
 		json_array_foreach(j_ops_a, i, j_op) {
 			jwk_key_op_t op = jwk_key_op_j(j_op);
 
 			if (op == JWK_KEY_OP_INVALID) {
-				jwks_write_error(item,
+				jwt_write_error(item,
 					"JWK has an invalid value in key_op");
 			} else {
 				item->key_ops |= op;
@@ -94,7 +98,7 @@ static void jwk_process_values(json_t *jwk, jwk_item_t *item)
 			item->kid = jwt_malloc(len + 1);
 			if (item->kid == NULL) {
 				// LCOV_EXCL_START
-				jwks_write_error(item,
+				jwt_write_error(item,
 					"Error allocating memory for kid");
 				// LCOV_EXCL_STOP
 			} else {
@@ -113,19 +117,19 @@ static int process_octet(json_t *jwk, jwk_item_t *item)
 
 	k = json_object_get(jwk, "k");
 	if (k == NULL || !json_is_string(k)) {
-		jwks_write_error(item, "Invalid JWK: missing `k`");
+		jwt_write_error(item, "Invalid JWK: missing `k`");
 		return -1;
 	}
 
 	str_k = json_string_value(k);
 	if (str_k == NULL || !strlen(str_k)) {
-		jwks_write_error(item, "Invalid JWK: invalid `k`");
+		jwt_write_error(item, "Invalid JWK: invalid `k`");
 		return -1;
 	}
 
 	bin_k = jwt_base64uri_decode(str_k, &len_k);
 	if (bin_k == NULL) {
-		jwks_write_error(item, "Invalid JWK: failed to decode `k`");
+		jwt_write_error(item, "Invalid JWK: failed to decode `k`");
 		return -1;
 	}
 
@@ -147,7 +151,7 @@ static jwk_item_t *jwk_process_one(jwk_set_t *jwk_set, json_t *jwk)
 	item = jwt_malloc(sizeof(*item));
 	if (item == NULL) {
 		// LCOV_EXCL_START
-		jwks_write_error(jwk_set,
+		jwt_write_error(jwk_set,
 			"Error allocating memory for jwk_item_t");
 		return NULL;
 		// LCOV_EXCL_STOP
@@ -157,7 +161,7 @@ static jwk_item_t *jwk_process_one(jwk_set_t *jwk_set, json_t *jwk)
 
 	val = json_object_get(jwk, "kty");
 	if (val == NULL || !json_is_string(val)) {
-		jwks_write_error(item, "Invalid JWK: missing kty value");
+		jwt_write_error(item, "Invalid JWK: missing kty value");
 		return item;
 	}
 
@@ -176,7 +180,7 @@ static jwk_item_t *jwk_process_one(jwk_set_t *jwk_set, json_t *jwk)
 		item->kty = JWK_KEY_TYPE_OCT;
 		process_octet(jwk, item);
 	} else {
-		jwks_write_error(item, "Unknown or unsupported kty type '%s'", kty);
+		jwt_write_error(item, "Unknown or unsupported kty type '%s'", kty);
 		return item;
 	}
 
@@ -185,63 +189,121 @@ static jwk_item_t *jwk_process_one(jwk_set_t *jwk_set, json_t *jwk)
 	return item;
 }
 
-jwk_item_t *jwks_item_get(jwk_set_t *jwk_set, size_t index)
+const jwk_item_t *jwks_item_get(const jwk_set_t *jwk_set, size_t index)
 {
-	struct jwk_list_item *item = NULL;
-	int i = 0;
+	jwk_item_t *item = NULL;
+	size_t i = 0;
 
 	list_for_each_entry(item, &jwk_set->head, node) {
 		if (i == index)
-			return item->item;
+			return item;
 		i++;
 	}
 
 	return NULL;
 }
 
-int jwks_error(jwk_set_t *jwk_set)
+int jwks_item_is_private(const jwk_item_t *item)
 {
-	return jwk_set->error ? 1 : 0;
+	return item->is_private_key ? 1 : 0;
 }
 
-const char *jwks_error_msg(jwk_set_t *jwk_set)
+int jwks_item_error(const jwk_item_t *item)
 {
-	if (jwk_set == NULL)
-		return "Unknown error";
-
-	return jwk_set->error_msg;
+	return item->error;
 }
 
-int jwks_item_add(jwk_set_t *jwk_set, jwk_item_t *item)
+const char *jwks_item_error_msg(const jwk_item_t *item)
 {
-	struct jwk_list_item *new;
+	return item->error_msg;
+}
 
-	if (item == NULL || jwk_set == NULL)
-		return EINVAL;
+const char *jwks_item_curve(const jwk_item_t *item)
+{
+	return item->curve[0] ? item->curve : NULL;
+}
 
-	new = jwt_malloc(sizeof(*new));
-	if (new == NULL)
-		return ENOMEM; // LCOV_EXCL_LINE
+const char *jwks_item_kid(const jwk_item_t *item)
+{
+	return item->kid;
+}
 
-	new->item = item;
+jwt_alg_t jwks_item_alg(const jwk_item_t *item)
+{
+	return item->alg;
+}
 
-	list_add(&new->node, &jwk_set->head);
+jwk_key_type_t jwks_item_kty(const jwk_item_t *item)
+{
+	return item->kty;
+}
+
+jwk_pub_key_use_t jwks_item_use(const jwk_item_t *item)
+{
+	return item->use;
+}
+
+jwk_key_op_t jwks_item_key_ops(const jwk_item_t *item)
+{
+	return item->key_ops;
+}
+
+const char *jwks_item_pem(const jwk_item_t *item)
+{
+	return item->pem;
+}
+
+int jwks_item_key_bits(const jwk_item_t *item)
+{
+	return item->bits;
+}
+
+int jwks_item_key_oct(const jwk_item_t *item, const unsigned char **buf,
+		      size_t *len)
+{
+	if (!item->oct.key || !item->oct.len)
+		return 1;
+
+	*buf = item->oct.key;
+	*len = item->oct.len;
 
 	return 0;
 }
 
-int jwks_item_free(jwk_set_t *jwk_set, size_t index)
+int jwks_error(const jwk_set_t *jwk_set)
 {
-	struct jwk_list_item *list_item = NULL, *todel = NULL;
-	jwk_item_t *item;
-        int i = 0;
+	return jwk_set->error ? 1 : 0;
+}
+
+const char *jwks_error_msg(const jwk_set_t *jwk_set)
+{
+	return jwk_set->error_msg;
+}
+
+void jwks_error_clear(jwk_set_t *jwk_set)
+{
+	jwk_set->error = 0;
+	memset(jwk_set->error_msg, 0, sizeof(jwk_set->error_msg));
+}
+
+static int jwks_item_add(jwk_set_t *jwk_set, jwk_item_t *item)
+{
+	list_add_tail(&item->node, &jwk_set->head);
+
+	return 0;
+}
+
+int jwks_item_free(jwk_set_t *jwk_set, const size_t index)
+{
+	jwk_item_t *item = NULL, *todel = NULL;
+	size_t i = 0;
 
 	if (jwk_set == NULL)
 		return 0;
 
-	list_for_each_entry(list_item, &jwk_set->head, node) {
+	list_for_each_entry(item, &jwk_set->head, node) {
 		if (i == index) {
-			todel = list_item;
+			todel = item;
 			break;
 		}
 		i++;
@@ -250,20 +312,17 @@ int jwks_item_free(jwk_set_t *jwk_set, size_t index)
 	if (todel == NULL)
 		return 0;
 
-	item = todel->item;
-
-	if (item->provider == JWT_CRYPTO_OPS_ANY)
-		jwt_freemem(item->oct.key);
+	if (todel->provider == JWT_CRYPTO_OPS_ANY)
+		jwt_freemem(todel->oct.key);
 	else
-		jwt_ops->process_item_free(item);
+		jwt_ops->process_item_free(todel);
 
 	/* A few non-crypto specific things. */
-	jwt_freemem(item->kid);
+	jwt_freemem(todel->kid);
 	list_del(&todel->node);
 
 	/* Free the container and the item itself. */
-	jwt_freemem(list_item);
-	jwt_freemem(item);
+	jwt_freemem(todel);
 
 	return 1;
 }
@@ -290,55 +349,143 @@ void jwks_free(jwk_set_t *jwk_set)
 	jwt_freemem(jwk_set);
 }
 
-jwk_set_t *jwks_create(const char *jwk_json_str)
+static jwk_set_t *jwks_new(void)
 {
-	json_auto_t *j_all = NULL;
-	json_t *j_array = NULL, *j_item = NULL;
-	json_error_t error;
 	jwk_set_t *jwk_set;
-	jwk_item_t *jwk_item;
-	size_t i;
-
-	errno = 0;
 
 	jwk_set = jwt_malloc(sizeof *jwk_set);
-	if (jwk_set == NULL) {
-		/* Yes, malloc(3) will set this, but just in case. */
-		// LCOV_EXCL_START
-		errno = ENOMEM;
+	if (jwk_set == NULL)
 		return NULL;
-		// LCOV_EXCL_STOP
-	}
 
 	memset(jwk_set, 0, sizeof(*jwk_set));
 	INIT_LIST_HEAD(&jwk_set->head);
 
-	/* Just an empty set */
-	if (jwk_json_str == NULL) {
+	return jwk_set;
+}
+
+static jwk_set_t *jwks_process(jwk_set_t *jwk_set, json_t *j_all, json_error_t *error)
+{
+	json_t *j_array = NULL, *j_item = NULL;
+	jwk_item_t *jwk_item;
+	size_t i;
+
+	if (j_all == NULL) {
+		jwt_write_error(jwk_set, "%s: %s", error->source, error->text);
 		return jwk_set;
 	}
+
+        /* Check for "keys" as in a JWKS */
+        j_array = json_object_get(j_all, "keys");
+
+        if (j_array == NULL) {
+                /* Assume a single JSON Object for one JWK */
+                jwk_item = jwk_process_one(jwk_set, j_all);
+                jwks_item_add(jwk_set, jwk_item);
+        } else {
+                /* We have a list, so parse them all. */
+                json_array_foreach(j_array, i, j_item) {
+                        jwk_item = jwk_process_one(jwk_set, j_item);
+                        jwks_item_add(jwk_set, jwk_item);
+                }
+        }
+
+        return jwk_set;
+}
+
+#define __FLAG_EMPTY	(void *)0xfffff00d
+jwk_set_t *jwks_load_strn(jwk_set_t *jwk_set, const char *jwk_json_str,
+			    const size_t len)
+{
+	json_auto_t *j_all = NULL;
+	json_error_t error;
+
+	if (jwk_json_str == NULL)
+		return NULL;
+
+	if (jwk_set == NULL)
+		jwk_set = jwks_new();
+	if (jwk_set == NULL)
+		return NULL;
+
+	/* Just an empty set. */
+	if (jwk_json_str == __FLAG_EMPTY)
+		return jwk_set;
 
 	/* Parse the JSON string. */
-	j_all = json_loads(jwk_json_str, JSON_DECODE_ANY, &error);
-	if (j_all == NULL) {
-		jwks_write_error(jwk_set, "%s: %s", error.source, error.text);
-		return jwk_set;
-	}
+	j_all = json_loadb(jwk_json_str, len, JSON_DECODE_ANY, &error);
 
-	/* Check for "keys" as in a JWKS */
-	j_array = json_object_get(j_all, "keys");
+	return jwks_process(jwk_set, j_all, &error);
+}
 
-	if (j_array == NULL) {
-		/* Assume a single JSON Object for one JWK */
-		jwk_item = jwk_process_one(jwk_set, j_all);
-		jwks_item_add(jwk_set, jwk_item);
+jwk_set_t *jwks_load(jwk_set_t *jwk_set, const char *jwk_json_str)
+{
+	const char *real_str = jwk_json_str;
+	size_t len;
+
+	if (real_str == NULL) {
+		real_str = __FLAG_EMPTY;
+		len = 0;
 	} else {
-		/* We have a list, so parse them all. */
-		json_array_foreach(j_array, i, j_item) {
-			jwk_item = jwk_process_one(jwk_set, j_item);
-			jwks_item_add(jwk_set, jwk_item);
-		}
+		len = strlen(real_str);
 	}
 
-	return jwk_set;
+	return jwks_load_strn(jwk_set, real_str, len);
+}
+
+jwk_set_t *jwks_load_fromfile(jwk_set_t *jwk_set, const char *file_name)
+{
+	json_auto_t *j_all = NULL;
+	json_error_t error;
+
+	if (file_name == NULL)
+		return NULL;
+
+	if (jwk_set == NULL)
+		jwk_set = jwks_new();
+	if (jwk_set == NULL)
+		return NULL;
+
+	/* Parse the JSON string. */
+	j_all = json_load_file(file_name, JSON_DECODE_ANY, &error);
+
+	return jwks_process(jwk_set, j_all, &error);
+}
+
+jwk_set_t *jwks_load_fromfp(jwk_set_t *jwk_set, FILE *input)
+{
+	json_auto_t *j_all = NULL;
+	json_error_t error;
+
+	if (input == NULL)
+		return NULL;
+
+	if (jwk_set == NULL)
+		jwk_set = jwks_new();
+	if (jwk_set == NULL)
+		return NULL;
+
+	/* Parse the JSON string. */
+	j_all = json_loadf(input, JSON_DECODE_ANY, &error);
+
+	return jwks_process(jwk_set, j_all, &error);
+}
+
+jwk_set_t *jwks_create(const char *jwk_json_str)
+{
+	return jwks_load(NULL, jwk_json_str);
+}
+
+jwk_set_t *jwks_create_strn(const char *jwk_json_str, const size_t len)
+{
+	return jwks_load_strn(NULL, jwk_json_str, len);
+}
+
+jwk_set_t *jwks_create_fromfile(const char *file_name)
+{
+	return jwks_load_fromfile(NULL, file_name);
+}
+
+jwk_set_t *jwks_create_fromfp(FILE *input)
+{
+	return jwks_load_fromfp(NULL, input);
 }

@@ -50,6 +50,7 @@ set(DOXYGEN_GENERATE_TAGFILE "${DOXYGEN_OUTPUT_DIRECTORY}/LibJWT.tag")
 set(DOXYGEN_DOT_IMAGE_FORMAT "svg")
 set(DOXYGEN_INTERACTIVE_SVG "YES")
 set(DOXYGEN_SEARCHENGINE "NO")
+set(DOXYGEN_LAYOUT_FILE "doxygen/DoxygenLayout.xml")
 
 # List of extra files we need for a nice theme
 set(DOXYGEN_HTML_EXTRA_FILES "doxygen/doxygen-awesome-paragraph-link.js")
@@ -65,7 +66,7 @@ set(a_pre_b "<a type=\\\"button\\\" class=\\\"button\\\" target=\\\"_blank\\\" h
 
 # Used for easily linking to RFC and RFC sections
 set(DOXYGEN_ALIASES "rfc{1}=\"${fa_i} ${a_pre}\\1\\\">RFC-\\1</a>\"")
-string(APPEND DOXYGEN_ALIASES " \\\n\trfc{2}=\"${fa_i} ${a_pre_b}\\1#section-\\2\\\">RFC-\\1 Sec \\2</a>\"")
+string(APPEND DOXYGEN_ALIASES " \\\n\trfc{2}=\"${a_pre_b}\\1#section-\\2\\\">RFC-\\1 Sec \\2</a>\"")
 string(APPEND DOXYGEN_ALIASES " \\\n\trfc_t{2}=\"${fa_i} ${a_pre}\\1#section-\\2\\\">RFC-\\1 Sec \\2</a>\"")
 
 set(DOXYGEN_VERBATIM_VARS DOXYGEN_EXAMPLE_PATTERNS DOXYGEN_PREDEFINED

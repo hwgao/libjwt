@@ -1,4 +1,4 @@
-/* Copyright (C) 2015-2024 maClara, LLC <info@maclara-llc.com>
+/* Copyright (C) 2015-2025 maClara, LLC <info@maclara-llc.com>
    This file is part of the JWT C Library
 
    SPDX-License-Identifier:  MPL-2.0
@@ -28,47 +28,104 @@
 #  endif
 #endif
 
+#define JWT_CONFIG_DECLARE(__name) \
+	jwt_config_t __name = { NULL, JWT_ALG_NONE, NULL}
+
+#define JWT_ERR_LEN 256
+
 JWT_NO_EXPORT
 extern struct jwt_crypto_ops *jwt_ops;
 
-/* This can be used for jwk_set_t and jwk_item_t */
-#define jwks_write_error(__obj, __fmt, __args...)		\
-({								\
-	snprintf(__obj->error_msg, sizeof(__obj->error_msg),	\
-		 __fmt, ##__args);				\
-	__obj->error = 1;					\
+/* This can be used on anything with an error and error_msg field */
+#define jwt_write_error(__obj, __fmt, __args...)	\
+({							\
+	if (!strlen((__obj)->error_msg))		\
+		snprintf((__obj)->error_msg,		\
+			 sizeof((__obj)->error_msg),	\
+		 __fmt, ##__args);			\
+	(__obj)->error = 1;				\
 })
 
-struct jwt {
-	jwt_alg_t alg;
+#define jwt_copy_error(__dst, __src)			\
+({							\
+	strcpy((__dst)->error_msg, (__src)->error_msg);	\
+	(__dst)->error = (__src)->error;		\
+})
 
+/******************************/
+
+struct jwt_common {
+	jwt_alg_t alg;
+	const jwk_item_t *key;
+	json_t *payload;
+	json_t *headers;
+	jwt_claims_t claims;
+	jwt_callback_t cb;
+	void *cb_ctx;
+};
+
+struct jwt_builder {
+	struct jwt_common c;
+	int error;
+	char error_msg[JWT_ERR_LEN];
+};
+
+struct jwt_checker {
+	struct jwt_common c;
+	int error;
+	char error_msg[JWT_ERR_LEN];
+};
+
+/*****************************/
+
+struct jwt {
+	const jwk_item_t *key;
 	json_t *grants;
 	json_t *headers;
-
-	const jwk_item_t *jw_key;
-};
-
-struct jwt_valid {
 	jwt_alg_t alg;
-	time_t now;
-	time_t nbf_leeway;
-	time_t exp_leeway;
-	int hdr;
-	json_t *req_grants;
-	jwt_valid_exception_t status;
+	int error;
+	char error_msg[JWT_ERR_LEN];
 };
-
-/* Yes, this is a bit of overhead, but it keeps me from having to
- * expose list.h in jwt.h. */
-typedef struct jwk_list_item {
-	ll_t node;
-	jwk_item_t *item;
-} jwk_list_item_t;
 
 struct jwk_set {
 	ll_t head;
 	int error;
-	char error_msg[256];
+	char error_msg[JWT_ERR_LEN];
+};
+
+/**
+ * This data structure is produced by importing a JWK or JWKS into a
+ * @ref jwk_set_t object. Generally, you would not change any values here
+ * and only use this to probe the internal parser and possibly to
+ * decide whether a key applies to certain jwt_t for verification
+ * or signing.
+ *
+ * If the jwk_item_t.pem field is not NULL, then it contains  a nil terminated
+ * string of the key. The underlying crypto algorithm may or may not support
+ * this. It's provided as a convenience.
+ */
+struct jwk_item {
+	ll_t node;
+	char *pem;		/**< If not NULL, contains PEM string of this key	*/
+	jwt_crypto_provider_t provider;	/**< Crypto provider that owns this key		*/
+	union {
+		void *provider_data;	/**< Internal data used by the provider		*/
+		struct {
+			void *key;	/**< Used for HMAC key material			*/
+			size_t len;	/**< Length of HMAC key material		*/
+		} oct;
+	};
+	int is_private_key;	/**< Whether this is a public or private key		*/
+	char curve[256];	/**< Curve name of an ``"EC"`` or ``"OKP"`` key		*/
+	size_t bits;		/**< The number of bits in the key (may be 0)		*/
+	int error;		/**< There was an error parsing this key (unusable)	*/
+	char error_msg[JWT_ERR_LEN];/**< Descriptive message for @ref jwk_item_t.error	*/
+	jwk_key_type_t kty;	/**< @rfc{7517,4.1} The key type of this key		*/
+	jwk_pub_key_use_t use;	/**< @rfc{7517,4.2} How this key can be used		*/
+	jwk_key_op_t key_ops;	/**< @rfc{7517,4.3} Key operations supported		*/
+	jwt_alg_t alg;		/**< @rfc{7517,4.4} JWA Algorithm supported		*/
+	char *kid;		/**< @rfc{7517,4.5} Key ID				*/
+	const char *json;	/**< The entire JSON string for this key		*/
 };
 
 /* Crypto operations */
@@ -128,20 +185,28 @@ jwt_t *jwt_new(void);
 	}				\
 })
 
+static inline void jwt_freememp(char **mem) {
+	jwt_freemem(*mem);
+}
+#define char_auto char  __attribute__((cleanup(jwt_freememp)))
+
+JWT_NO_EXPORT
+void jwt_free(jwt_t *jwt);
+
+static inline void jwt_freep(jwt_t **jwt) {
+	if (jwt) {
+		jwt_free(*jwt);
+		*jwt = NULL;
+	}
+}
+#define jwt_auto_t jwt_t __attribute__((cleanup(jwt_freep)))
+
 /* Helper routines to handle base64url encoding without percent padding
  * as defined in RFC-4648. */
 JWT_NO_EXPORT
 int jwt_base64uri_encode(char **_dst, const char *plain, int plain_len);
 JWT_NO_EXPORT
 void *jwt_base64uri_decode(const char *src, int *ret_len);
-
-/* JSON stuff */
-JWT_NO_EXPORT
-const char *get_js_string(const json_t *js, const char *key);
-JWT_NO_EXPORT
-long get_js_int(const json_t *js, const char *key);
-JWT_NO_EXPORT
-int get_js_bool(const json_t *js, const char *key);
 
 /* A time-safe strcmp function */
 JWT_NO_EXPORT
@@ -154,14 +219,37 @@ JWT_NO_EXPORT
 void jwt_scrub_key(jwt_t *jwt);
 
 JWT_NO_EXPORT
-int jwt_verify_sig(jwt_t *jwt, const char *head, unsigned int head_len,
+jwt_t *jwt_verify_sig(jwt_t *jwt, const char *head, unsigned int head_len,
                    const char *sig);
 JWT_NO_EXPORT
 int jwt_sign(jwt_t *jwt, char **out, unsigned int *len, const char *str,
 	     unsigned int str_len);
 
 JWT_NO_EXPORT
-int __append_str(char **buf, const char *str);
+jwt_value_error_t __deleter(json_t *which, const char *field);
+JWT_NO_EXPORT
+jwt_value_error_t __adder(json_t *which, jwt_value_t *value);
+JWT_NO_EXPORT
+jwt_value_error_t __getter(json_t *which, jwt_value_t *value);
+
+JWT_NO_EXPORT
+int jwt_parse(jwt_t *jwt, const char *token, unsigned int *len);
+JWT_NO_EXPORT
+jwt_t *jwt_verify_complete(jwt_t *jwt, const jwt_config_t *config,
+			   const char *token, unsigned int payload_len);
+
+JWT_NO_EXPORT
+int jwt_builder_setkey_check(jwt_builder_t *builder, const jwt_alg_t alg,
+			     const jwk_item_t *key);
+JWT_NO_EXPORT
+int jwt_checker_setkey_check(jwt_checker_t *checker, const jwt_alg_t alg,
+			     const jwk_item_t *key);
+
+JWT_NO_EXPORT
+char *jwt_encode_str(jwt_t *jwt);
+
+JWT_NO_EXPORT
+int jwt_head_setup(jwt_t *jwt);
 
 #define __trace() fprintf(stderr, "%s:%d\n", __func__, __LINE__)
 
