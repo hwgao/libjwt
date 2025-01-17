@@ -10,7 +10,7 @@
 
 START_TEST(test_jwt_ops)
 {
-	int i;
+	size_t i;
 
 	for (i = 0; i < ARRAY_SIZE(jwt_test_ops); i++) {
 		jwt_test_op_t *op = &jwt_test_ops[i];
@@ -26,6 +26,7 @@ START_TEST(test_jwt_ops)
 
 		type = jwt_get_crypto_ops_t();
 		ck_assert_int_eq(type, op->type);
+		ck_assert_int_ne(jwt_crypto_ops_supports_jwk(), 0);
 	}
 
 	/* Assert that this fails */
@@ -52,7 +53,7 @@ static Suite *libjwt_suite(const char *title)
 	return s;
 }
 
-int main(int argc, char *argv[])
+int main(void)
 {
 	JWT_TEST_MAIN("LibJWT Crypto Operations");
 }

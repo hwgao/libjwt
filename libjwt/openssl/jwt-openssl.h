@@ -14,12 +14,4 @@ int openssl_process_rsa(json_t *jwk, jwk_item_t *item);
 int openssl_process_ec(json_t *jwk, jwk_item_t *item);
 void openssl_process_item_free(jwk_item_t *item);
 
-typedef struct {
-	/* For everything but HMAC */
-	EVP_PKEY *pkey;
-	/* For HMAC only */
-	unsigned char *key;
-	int key_len;
-} jwk_openssl_ctx_t;
-
 #endif /* JWT_OPENSSL_H */

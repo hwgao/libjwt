@@ -6,8 +6,6 @@
    License, v. 2.0. If a copy of the MPL was not distributed with this
    file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include <mbedtls/ssl.h>
-
 #include <jwt.h>
 
 #include "jwt-private.h"
@@ -17,21 +15,21 @@ static const char not_implemented[] = "MBedTLS does not yet implement JWK";
 JWT_NO_EXPORT
 int mbedtls_process_eddsa(json_t *jwk, jwk_item_t *item)
 {
-	jwks_write_error(item, not_implemented);
+	jwt_write_error(item, not_implemented);
 	return -1;
 }
 
 JWT_NO_EXPORT
 int mbedtls_process_rsa(json_t *jwk, jwk_item_t *item)
 {
-	jwks_write_error(item, not_implemented);
+	jwt_write_error(item, not_implemented);
 	return -1;
 }
 
 JWT_NO_EXPORT
 int mbedtls_process_ec(json_t *jwk, jwk_item_t *item)
 {
-	jwks_write_error(item, not_implemented);
+	jwt_write_error(item, not_implemented);
 	return -1;
 }
 

@@ -8,7 +8,6 @@
 
 #include <stdlib.h>
 #include <string.h>
-#include <errno.h>
 #include <stdio.h>
 
 #include <jwt.h>
@@ -33,11 +32,6 @@ void *jwt_realloc(void *ptr, size_t size)
 		return pfn_realloc(ptr, size);
 
 	return realloc(ptr, size);
-}
-
-void jwt_free_str(char *str)
-{
-	jwt_freemem(str);
 }
 
 int jwt_set_alloc(jwt_malloc_t pmalloc, jwt_realloc_t prealloc, jwt_free_t pfree)

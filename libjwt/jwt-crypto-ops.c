@@ -8,7 +8,6 @@
 
 #include <stdlib.h>
 #include <string.h>
-#include <errno.h>
 #include <stdio.h>
 
 #include <jwt.h>
@@ -29,6 +28,7 @@ static struct jwt_crypto_ops *jwt_ops_available[] = {
 	NULL,
 };
 
+JWT_NO_EXPORT
 #if defined HAVE_OPENSSL
 struct jwt_crypto_ops *jwt_ops = &jwt_openssl_ops;
 #elif defined HAVE_GNUTLS
@@ -82,7 +82,7 @@ int jwt_set_crypto_ops_t(jwt_crypto_provider_t opname)
 		return 0;
 	}
 
-	return EINVAL;
+	return 1;
 }
 
 int jwt_set_crypto_ops(const char *opname)
@@ -98,7 +98,7 @@ int jwt_set_crypto_ops(const char *opname)
 		return 0;
 	}
 
-	return EINVAL;
+	return 1;
 }
 
 int jwt_crypto_ops_supports_jwk(void)
